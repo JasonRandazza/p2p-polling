@@ -2,12 +2,17 @@
 #include "logos_sdk.h"
 #include "liblogosdelivery.h"
 #include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QProcessEnvironment>
 #include <QRandomGenerator>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QUuid>
 
 namespace {
@@ -52,6 +57,7 @@ PollingCorePlugin::PollingCorePlugin(QObject* parent)
 
 PollingCorePlugin::~PollingCorePlugin()
 {
+    stopVoteBridge();
     shutdownDelivery();
     delete m_logos;
 }
@@ -69,6 +75,7 @@ void PollingCorePlugin::initLogos(LogosAPI* api)
     }
 
     initializeDelivery();
+    startVoteBridge();
 
     qDebug() << "PollingCorePlugin: initialized";
 }
@@ -306,27 +313,37 @@ void PollingCorePlugin::handleDeliveryOperation(const QString& operation, int re
 
 void PollingCorePlugin::broadcastVote(const QString& option, const QString& voteId)
 {
-    if (!m_delivery || !m_networkReady) {
-        return;
+    // Waku P2P broadcast (fast, low-latency)
+    if (m_delivery && m_networkReady) {
+        const QJsonObject vote {
+            { "type", "vote" },
+            { "id", voteId },
+            { "sender", m_instanceId },
+            { "option", option }
+        };
+
+        const QJsonObject envelope {
+            { "contentTopic", QString::fromUtf8(kPollTopic) },
+            { "payload", QString::fromUtf8(jsonString(vote).toBase64()) },
+            { "ephemeral", false }
+        };
+
+        const QByteArray messageJson = jsonString(envelope);
+        const int sendResult = logosdelivery_send(m_delivery, deliveryOperationCallback, this, messageJson.constData());
+        if (sendResult != RET_OK) {
+            updateNetworkStatus(QStringLiteral("Logos Delivery send request failed"), false);
+        }
     }
 
-    const QJsonObject vote {
-        { "type", "vote" },
-        { "id", voteId },
-        { "sender", m_instanceId },
-        { "option", option }
-    };
-
-    const QJsonObject envelope {
-        { "contentTopic", QString::fromUtf8(kPollTopic) },
-        { "payload", QString::fromUtf8(jsonString(vote).toBase64()) },
-        { "ephemeral", false }
-    };
-
-    const QByteArray messageJson = jsonString(envelope);
-    const int sendResult = logosdelivery_send(m_delivery, deliveryOperationCallback, this, messageJson.constData());
-    if (sendResult != RET_OK) {
-        updateNetworkStatus(QStringLiteral("Logos Delivery send request failed"), false);
+    // Blockchain inscription (permanent, on-chain record)
+    if (m_voteBridge && m_voteBridge->state() == QProcess::Running) {
+        const QJsonObject cmd {
+            { "cmd", "publish" },
+            { "option", option },
+            { "vote_id", voteId },
+            { "sender", m_instanceId }
+        };
+        writeVoteBridge(jsonString(cmd) + '\n');
     }
 }
 
@@ -409,6 +426,133 @@ void PollingCorePlugin::updateNetworkStatus(const QString& status, bool ready)
     m_networkReady = ready;
 
     emit eventResponse("networkStatusChanged", QVariantList() << snapshot());
+}
+
+void PollingCorePlugin::startVoteBridge()
+{
+    // Search for the vote-bridge binary alongside the installed module files.
+    // LogosBasecampDev installs everything to the same module directory,
+    // so vote-bridge lives next to polling_core_plugin.so when bundled.
+    const QStringList candidates = {
+        QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
+            + QStringLiteral("/.local/share/Logos/LogosBasecampDev/modules/polling_core/vote-bridge"),
+        QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
+            + QStringLiteral("/.local/share/Logos/modules/polling_core/vote-bridge"),
+        QStringLiteral("vote-bridge"), // fallback: PATH
+    };
+
+    QString bridgePath;
+    for (const QString& candidate : candidates) {
+        if (QFile::exists(candidate)) {
+            bridgePath = candidate;
+            break;
+        }
+    }
+
+    if (bridgePath.isEmpty()) {
+        qDebug() << "PollingCorePlugin: vote-bridge binary not found — blockchain inscriptions disabled";
+        return;
+    }
+
+    m_voteBridge = new QProcess(this);
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    // Data directory for key + checkpoint persistence (survives lgpm reinstalls)
+    const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
+        + QStringLiteral("/.local/share/Logos/polling_core");
+    env.insert(QStringLiteral("VOTE_DATA_DIR"), dataDir);
+    m_voteBridge->setProcessEnvironment(env);
+
+    connect(m_voteBridge, &QProcess::readyReadStandardOutput,
+            this, [this]() { processVoteBridgeOutput(); });
+
+    connect(m_voteBridge, &QProcess::errorOccurred,
+            this, [this](QProcess::ProcessError error) {
+                qWarning() << "PollingCorePlugin: vote-bridge error" << error;
+            });
+
+    connect(m_voteBridge, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+            this, [this](int code, QProcess::ExitStatus) {
+                qWarning() << "PollingCorePlugin: vote-bridge exited with code" << code;
+                m_voteBridge->deleteLater();
+                m_voteBridge = nullptr;
+            });
+
+    m_voteBridge->start(bridgePath, {});
+    if (!m_voteBridge->waitForStarted(5000)) {
+        qWarning() << "PollingCorePlugin: vote-bridge failed to start";
+        delete m_voteBridge;
+        m_voteBridge = nullptr;
+        return;
+    }
+
+    qDebug() << "PollingCorePlugin: vote-bridge started -" << bridgePath;
+}
+
+void PollingCorePlugin::stopVoteBridge()
+{
+    if (!m_voteBridge) {
+        return;
+    }
+    m_voteBridge->terminate();
+    if (!m_voteBridge->waitForFinished(3000)) {
+        m_voteBridge->kill();
+    }
+    delete m_voteBridge;
+    m_voteBridge = nullptr;
+}
+
+void PollingCorePlugin::writeVoteBridge(const QByteArray& jsonLine)
+{
+    if (m_voteBridge && m_voteBridge->state() == QProcess::Running) {
+        m_voteBridge->write(jsonLine);
+    }
+}
+
+void PollingCorePlugin::processVoteBridgeOutput()
+{
+    while (m_voteBridge && m_voteBridge->canReadLine()) {
+        const QByteArray line = m_voteBridge->readLine().trimmed();
+        if (line.isEmpty()) {
+            continue;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(line);
+        if (!doc.isObject()) {
+            continue;
+        }
+
+        const QJsonObject obj = doc.object();
+        const QString event = obj.value("event").toString();
+
+        if (event == QLatin1String("ready")) {
+            qDebug() << "PollingCorePlugin: vote-bridge ready — blockchain inscriptions active";
+            updateNetworkStatus(
+                QStringLiteral("Connected to Logos blockchain channel logos:yolo:polling"), true);
+
+        } else if (event == QLatin1String("vote")) {
+            const QString option  = obj.value("option").toString();
+            const QString voteId  = obj.value("vote_id").toString();
+            const QString sender  = obj.value("sender").toString();
+
+            // Reuse the same deduplication as the Waku path.
+            // The vote payload on-chain carries the same UUID, so a vote
+            // delivered by both Waku and the blockchain is only counted once.
+            if (sender == m_instanceId
+                || voteId.isEmpty()
+                || m_seenVoteIds.contains(voteId)
+                || !isValidOption(option)) {
+                continue;
+            }
+
+            qDebug() << "PollingCorePlugin: blockchain vote received for" << option;
+            recordVote(option, QStringLiteral("network"), voteId);
+
+        } else if (event == QLatin1String("error")) {
+            const QString message = obj.value("message").toString();
+            qWarning() << "PollingCorePlugin: vote-bridge error:" << message;
+        }
+    }
 }
 
 void PollingCorePlugin::loadVoteCounts()

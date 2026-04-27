@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <QObject>
+#include <QProcess>
 #include <QSet>
 #include <QString>
 #include <QVariantList>
@@ -55,9 +56,16 @@ private:
     void loadVoteCounts();
     void saveVoteCounts();
 
+    // Blockchain channel inscription bridge
+    void startVoteBridge();
+    void stopVoteBridge();
+    void writeVoteBridge(const QByteArray& jsonLine);
+    void processVoteBridgeOutput();
+
     LogosModules* m_logos = nullptr;
     QVariantMap m_votes;
     void* m_delivery = nullptr;
+    QProcess* m_voteBridge = nullptr;
     QSet<QString> m_seenVoteIds;
     QString m_instanceId;
     QString m_networkStatus = QStringLiteral("Logos Delivery not started");

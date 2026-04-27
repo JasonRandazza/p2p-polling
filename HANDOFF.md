@@ -247,14 +247,110 @@ When a `voteSubmitted` event arrives with `source === "network"`, a pill-shaped 
 
 `nix build .#lgx-portable` (without `--impure`) succeeds on this machine because the `logos-delivery` flake lock file contains a `narHash` and the content is already in the nix store from previous impure builds. On a fresh machine the first build still requires `--impure`. The portable output contains the `linux-amd64` variant (not `linux-amd64-dev`) — do NOT install the portable into `LogosBasecampDev`.
 
+## Session 3 Additions (2026-04-27) — Blockchain Channel Inscriptions
+
+### Architecture
+
+The polling app now submits votes through **two parallel channels**:
+
+1. **Waku/Logos Delivery** (existing) — low-latency P2P gossip, ~seconds
+2. **Logos blockchain ChannelInscribe** (new) — permanent on-chain record, ~slot time
+
+Both channels embed the same `vote_id` UUID in the payload. The C++ core deduplicates via `m_seenVoteIds`, so a vote delivered by both channels is only counted once. If Waku is unavailable, the blockchain delivers the vote and vice-versa.
+
+### How ChannelInscribe works
+
+`ChannelInscribe` is a Logos blockchain (Nomos) operation. It:
+
+1. Creates a `MantleTx` with an `InscriptionOp` containing the vote JSON payload
+2. Signs it with an Ed25519 key
+3. POSTs the `SignedMantleTx` to the node's `/mempool/add/tx` endpoint
+
+The channel is identified by a 32-byte `ChannelId`. All polling app instances use the same channel: `"logos:yolo:polling"` zero-padded to 32 bytes.
+
+### vote-bridge sidecar (new file: `core/vote-bridge/`)
+
+The Zone SDK (`lb_zone_sdk`) is a Rust library — it cannot be called from C++ directly. A small Rust sidecar binary (`vote-bridge`) bridges the two:
+
+- **Protocol**: JSON lines on stdin/stdout
+- `stdout → {"event":"ready"}` — emitted once the sequencer receives its first block
+- `stdout → {"event":"vote","option":"Apples","vote_id":"<uuid>","sender":"<instanceId>"}` — when a remote vote is detected on-chain
+- `stdin  ← {"cmd":"publish","option":"Apples","vote_id":"<uuid>","sender":"<instanceId>"}` — from C++ to inscribe a vote
+
+**Indexer**: polls `/cryptarchia/blocks?from=X&to=Y` every 5 seconds using `NodeHttpClient::zone_messages_in_blocks`. On first startup it backfills from genesis slot 0 to the current canonical tip. Subsequent polls scan only new slots.
+
+**Sequencer**: uses `ZoneSequencer::init()` + `spawn()`. Tracks last message ID for chain linking. Checkpoint persisted to `VOTE_DATA_DIR/vote_bridge.checkpoint` after each successful publish.
+
+**Key management**: Ed25519 key loaded from or generated at `VOTE_DATA_DIR/vote_bridge.key` on first run.
+
+**Environment variables**:
+
+- `VOTE_NODE_URL` — node HTTP endpoint (default: `http://localhost:8080`)
+- `VOTE_DATA_DIR` — where key and checkpoint live (default: `~/.local/share/Logos/polling_core`)
+
+### Rust toolchain note
+
+The vote-bridge pins `channel = "1.93.0"` (same as zone-sdk-test) via `core/vote-bridge/rust-toolchain.toml`. Dependencies are pinned to `tag = "0.1.2"` of `logos-blockchain` GitHub — the same tag used by zone-sdk-test.
+
+### C++ integration (`polling_core_plugin.cpp`)
+
+`startVoteBridge()` is called from `initLogos()`. It searches for the `vote-bridge` binary in the module install directory:
+
+- `~/.local/share/Logos/LogosBasecampDev/modules/polling_core/vote-bridge`
+- `~/.local/share/Logos/modules/polling_core/vote-bridge`
+
+If not found, blockchain inscriptions are silently disabled (Waku-only fallback).
+
+`broadcastVote()` now writes a `{"cmd":"publish",...}` JSON line to vote-bridge stdin in addition to the existing Waku send.
+
+`processVoteBridgeOutput()` parses incoming JSON lines from vote-bridge stdout and calls `recordVote()` for `"vote"` events (with deduplication).
+
+### Building vote-bridge
+
+```bash
+cd /home/jrazz/logos-bootcamp/p2p-polling/core/vote-bridge
+cargo build --release
+# Then copy to module dir (lgpm reinstall overwrites the dir, so copy after each lgpm install):
+cp target/release/vote-bridge \
+   ~/.local/share/Logos/LogosBasecampDev/modules/polling_core/vote-bridge
+```
+
+First build downloads all Rust crates (~10 min). Subsequent builds are fast (seconds).
+
+### Installing after code changes
+
+```bash
+# 1. Rebuild C++ core
+cd /home/jrazz/logos-bootcamp/p2p-polling/core
+nix build .#lgx -L --impure -o result-polling-core-lgx-dev
+
+# 2. Install C++ core
+/home/jrazz/logos-bootcamp/logos-tutorial/pm/bin/lgpm \
+  --modules-dir ~/.local/share/Logos/LogosBasecampDev/modules \
+  install --file result-polling-core-lgx-dev/logos-polling_core-module-lib.lgx
+
+# 3. Copy vote-bridge (lgpm install overwrites the module dir)
+cp /home/jrazz/logos-bootcamp/p2p-polling/core/vote-bridge/target/release/vote-bridge \
+   ~/.local/share/Logos/LogosBasecampDev/modules/polling_core/vote-bridge
+```
+
+### Runtime verification checklist
+
+- Launch Basecamp with the consensus node running on port 8080
+- Open polling_ui — after a few seconds the sequencer connects and logs appear
+- Cast a vote — it should be submitted both via Waku and inscribed on-chain
+- Wait ~5 seconds — the indexer poll will pick up the inscription and emit a `vote` event
+- The C++ core receives the event; since the vote_id is already in `m_seenVoteIds` it's a no-op (expected)
+- On a second Basecamp instance: their vote inscription arrives via the 5-second poll, passes deduplication, and increments the counter
+
 ## Current State (2026-04-27)
 
 Both packages built and installed into `LogosBasecampDev`:
 
-- Core: persistent storage, P2P broadcast/receive, deduplication, network status events
+- Core: persistent storage, Waku P2P broadcast/receive, blockchain inscription, deduplication across both channels, network status events
 - UI: vote cards, loading state, toast notifications, status bar with network info
 
-All checklist items through multi-instance P2P verified working.
+All checklist items through multi-instance P2P verified working (Waku). Blockchain inscription code compiled, binary installed, awaiting runtime test with a running consensus node.
 
 What was proven by builds:
 
@@ -361,7 +457,7 @@ nix build .#lib -L --impure
 find /home/jrazz/logos-bootcamp/p2p-polling -maxdepth 4 -name '*.lgx'
 ```
 
-5. Multi-instance/network test:
+1. Multi-instance/network test:
    - Run two Basecamp instances if RAM allows.
    - Vote in instance A.
    - Instance B should receive `message_received` and update.
