@@ -53,6 +53,7 @@ private:
     void processRemoteVote(const QByteArray& payload);
     void recordVote(const QString& option, const QString& source, const QString& voteId);
     void updateNetworkStatus(const QString& status, bool ready);
+    void updateChainStatus(const QString& status, bool ready);
     void loadVoteCounts();
     void saveVoteCounts();
 
@@ -69,7 +70,9 @@ private:
     QSet<QString> m_seenVoteIds;
     QString m_instanceId;
     QString m_networkStatus = QStringLiteral("Logos Delivery not started");
+    QString m_chainStatus = QStringLiteral("Logos blockchain bridge not started");
     bool m_networkReady = false;
+    bool m_chainReady = false;
 };
 
 #endif // POLLING_CORE_PLUGIN_H

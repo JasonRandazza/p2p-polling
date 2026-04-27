@@ -299,7 +299,7 @@ The vote-bridge pins `channel = "1.93.0"` (same as zone-sdk-test) via `core/vote
 - `~/.local/share/Logos/LogosBasecampDev/modules/polling_core/vote-bridge`
 - `~/.local/share/Logos/modules/polling_core/vote-bridge`
 
-If not found, blockchain inscriptions are silently disabled (Waku-only fallback).
+If not found, blockchain inscriptions are disabled and surfaced through `chainStatus` (Waku-only fallback).
 
 `broadcastVote()` now writes a `{"cmd":"publish",...}` JSON line to vote-bridge stdin in addition to the existing Waku send.
 
@@ -343,14 +343,69 @@ cp /home/jrazz/logos-bootcamp/p2p-polling/core/vote-bridge/target/release/vote-b
 - The C++ core receives the event; since the vote_id is already in `m_seenVoteIds` it's a no-op (expected)
 - On a second Basecamp instance: their vote inscription arrives via the 5-second poll, passes deduplication, and increments the counter
 
+## Session 4 Testing/Fixes (2026-04-27)
+
+Latest local verification after resuming development:
+
+- `cargo test --release` in `core/vote-bridge` completed successfully. There are currently 0 Rust unit tests, but the release binary compiles.
+- `curl http://localhost:8080/cryptarchia/info` failed with "Couldn't connect to server".
+- `curl http://localhost:18080/cryptarchia/info` also failed with "Couldn't connect to server".
+- `docker ps` failed because Docker is not available in this WSL distro. Docker Desktop WSL integration likely needs to be enabled before using the local blockchain compose stack from this shell.
+
+Code fix made in this session:
+
+- `polling_core` now separates Delivery/Waku status from blockchain sidecar status:
+  - `deliveryStatus` / `deliveryReady`
+  - `chainStatus` / `chainReady`
+  - existing `networkStatus` / `networkReady` are kept for backward compatibility with older UI code.
+- `vote-bridge` readiness no longer overwrites the Delivery status. It updates `chainStatus`.
+- Missing, failed, stopped, or errored `vote-bridge` states are surfaced to the UI instead of being mostly log-only.
+- The UI status panel now displays Delivery and Blockchain status on separate lines.
+- The Delivery test checklist was corrected to use `/logos-polling/1/votes/proto`, not the earlier invalid six-segment topic.
+
+Build/install verification after these fixes:
+
+```bash
+cd /home/jrazz/logos-bootcamp/p2p-polling/core/vote-bridge
+cargo test --release
+
+cd /home/jrazz/logos-bootcamp/p2p-polling/core
+nix build .#lgx -L --impure -o result-polling-core-lgx-dev
+
+cd /home/jrazz/logos-bootcamp/p2p-polling/ui
+nix build .#lgx -L --impure -o result-polling-ui-lgx-dev
+```
+
+Both `nix build` commands passed and fresh dev packages were installed into `LogosBasecampDev`.
+
+The installed sidecar binary already matched the fresh release binary:
+
+```bash
+sha256sum core/vote-bridge/target/release/vote-bridge
+sha256sum ~/.local/share/Logos/LogosBasecampDev/modules/polling_core/vote-bridge
+```
+
+Both hashes were:
+
+```text
+45c96773f0976869974cc52f268d0fb95346b999ae00cc02270f4009f941339e
+```
+
+Expected runtime behavior with no blockchain node running:
+
+- Local voting should still increment immediately.
+- Delivery/Waku status should report separately.
+- Blockchain status should remain on a connecting/error/stopped state until a valid node endpoint is reachable.
+- This missing node condition should not block local voting or Waku-based P2P voting.
+
 ## Current State (2026-04-27)
 
 Both packages built and installed into `LogosBasecampDev`:
 
-- Core: persistent storage, Waku P2P broadcast/receive, blockchain inscription, deduplication across both channels, network status events
-- UI: vote cards, loading state, toast notifications, status bar with network info
+- Core: persistent storage, Waku P2P broadcast/receive, blockchain inscription, deduplication across both channels, separated Delivery and blockchain status events
+- UI: vote cards, loading state, toast notifications, status panel with separate Delivery and Blockchain info
 
-All checklist items through multi-instance P2P verified working (Waku). Blockchain inscription code compiled, binary installed, awaiting runtime test with a running consensus node.
+All checklist items through multi-instance P2P verified working (Waku). Blockchain inscription code compiled, binary installed, and status surfaced in UI, but runtime inscription still awaits a reachable consensus/node HTTP endpoint.
 
 What was proven by builds:
 
@@ -496,7 +551,7 @@ Run these tests in order. Stop at the first failure and inspect logs before chan
 - Check logs for Delivery node initialization.
 - Confirm `logosdelivery_create_node` completes successfully.
 - Confirm `logosdelivery_start_node` completes successfully.
-- Confirm subscription to `/logos/tutorial/polling/1/vote/proto` completes successfully.
+- Confirm subscription to `/logos-polling/1/votes/proto` completes successfully.
 - Confirm the UI status text eventually reflects the Delivery network state.
 - If Delivery fails to start, inspect the status emitted by `networkStatusChanged`.
 

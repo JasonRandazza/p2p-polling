@@ -104,7 +104,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 54
+            Layout.preferredHeight: 92
             radius: 8
             color: root.errorText.length > 0 ? "#3a262a" : "#26352f"
             border.color: root.errorText.length > 0 ? "#7f3b45" : "#3e6657"
@@ -112,9 +112,12 @@ Item {
 
             Text {
                 anchors.centerIn: parent
+                width: parent.width - 28
                 text: root.errorText.length > 0 ? root.errorText : root.statusText
                 color: root.errorText.length > 0 ? root.warningColor : root.accentColor
                 font.pixelSize: 14
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
             }
         }
     }
@@ -209,9 +212,7 @@ Item {
 
         var total = result.total !== undefined ? Number(result.total) : root.totalVotes()
         root.errorText = ""
-        root.statusText = "Total votes: " + total
-        if (result.networkStatus)
-            root.statusText += " | " + String(result.networkStatus)
+        root.statusText = root.buildStatusText(total, result)
     }
 
     function refreshCounts() {
@@ -229,6 +230,22 @@ Item {
 
     function totalVotes() {
         return root.countFor("Apples") + root.countFor("Bananas") + root.countFor("Oranges")
+    }
+
+    function buildStatusText(total, result) {
+        var text = "Total votes: " + total
+
+        if (result.deliveryStatus) {
+            text += "\nDelivery: " + String(result.deliveryStatus)
+        } else if (result.networkStatus) {
+            text += "\nNetwork: " + String(result.networkStatus)
+        }
+
+        if (result.chainStatus) {
+            text += "\nBlockchain: " + String(result.chainStatus)
+        }
+
+        return text
     }
 
     function callCore(method, args, onSuccess) {

@@ -111,9 +111,10 @@ QString PollingCorePlugin::getStatus()
     const int total = m_votes.value("Apples").toInt()
         + m_votes.value("Bananas").toInt()
         + m_votes.value("Oranges").toInt();
-    return QStringLiteral("Polling core is tracking %1 votes. %2")
+    return QStringLiteral("Polling core is tracking %1 votes. Delivery: %2. Blockchain: %3")
         .arg(total)
-        .arg(m_networkStatus);
+        .arg(m_networkStatus)
+        .arg(m_chainStatus);
 }
 
 void PollingCorePlugin::deliveryCreateCallback(int ret, const char* msg, size_t len, void* userData)
@@ -228,6 +229,10 @@ QVariantMap PollingCorePlugin::snapshot() const
         + counts.value("Oranges").toInt());
     result.insert("networkReady", m_networkReady);
     result.insert("networkStatus", m_networkStatus);
+    result.insert("deliveryReady", m_networkReady);
+    result.insert("deliveryStatus", m_networkStatus);
+    result.insert("chainReady", m_chainReady);
+    result.insert("chainStatus", m_chainStatus);
     return result;
 }
 
@@ -428,6 +433,14 @@ void PollingCorePlugin::updateNetworkStatus(const QString& status, bool ready)
     emit eventResponse("networkStatusChanged", QVariantList() << snapshot());
 }
 
+void PollingCorePlugin::updateChainStatus(const QString& status, bool ready)
+{
+    m_chainStatus = status;
+    m_chainReady = ready;
+
+    emit eventResponse("networkStatusChanged", QVariantList() << snapshot());
+}
+
 void PollingCorePlugin::startVoteBridge()
 {
     // Search for the vote-bridge binary alongside the installed module files.
@@ -450,7 +463,8 @@ void PollingCorePlugin::startVoteBridge()
     }
 
     if (bridgePath.isEmpty()) {
-        qDebug() << "PollingCorePlugin: vote-bridge binary not found — blockchain inscriptions disabled";
+        updateChainStatus(QStringLiteral("Blockchain inscriptions disabled: vote-bridge binary not found"), false);
+        qDebug() << "PollingCorePlugin: vote-bridge binary not found - blockchain inscriptions disabled";
         return;
     }
 
@@ -461,6 +475,7 @@ void PollingCorePlugin::startVoteBridge()
     const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
         + QStringLiteral("/.local/share/Logos/polling_core");
     env.insert(QStringLiteral("VOTE_DATA_DIR"), dataDir);
+    const QString nodeUrl = env.value(QStringLiteral("VOTE_NODE_URL"), QStringLiteral("http://localhost:8080"));
     m_voteBridge->setProcessEnvironment(env);
 
     connect(m_voteBridge, &QProcess::readyReadStandardOutput,
@@ -469,11 +484,13 @@ void PollingCorePlugin::startVoteBridge()
     connect(m_voteBridge, &QProcess::errorOccurred,
             this, [this](QProcess::ProcessError error) {
                 qWarning() << "PollingCorePlugin: vote-bridge error" << error;
+                updateChainStatus(QStringLiteral("Blockchain bridge error: %1").arg(m_voteBridge->errorString()), false);
             });
 
     connect(m_voteBridge, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
             this, [this](int code, QProcess::ExitStatus) {
                 qWarning() << "PollingCorePlugin: vote-bridge exited with code" << code;
+                updateChainStatus(QStringLiteral("Blockchain bridge stopped with exit code %1").arg(code), false);
                 m_voteBridge->deleteLater();
                 m_voteBridge = nullptr;
             });
@@ -481,11 +498,13 @@ void PollingCorePlugin::startVoteBridge()
     m_voteBridge->start(bridgePath, {});
     if (!m_voteBridge->waitForStarted(5000)) {
         qWarning() << "PollingCorePlugin: vote-bridge failed to start";
+        updateChainStatus(QStringLiteral("Blockchain bridge failed to start: %1").arg(m_voteBridge->errorString()), false);
         delete m_voteBridge;
         m_voteBridge = nullptr;
         return;
     }
 
+    updateChainStatus(QStringLiteral("Connecting to Logos blockchain at %1...").arg(nodeUrl), false);
     qDebug() << "PollingCorePlugin: vote-bridge started -" << bridgePath;
 }
 
@@ -526,8 +545,8 @@ void PollingCorePlugin::processVoteBridgeOutput()
         const QString event = obj.value("event").toString();
 
         if (event == QLatin1String("ready")) {
-            qDebug() << "PollingCorePlugin: vote-bridge ready — blockchain inscriptions active";
-            updateNetworkStatus(
+            qDebug() << "PollingCorePlugin: vote-bridge ready - blockchain inscriptions active";
+            updateChainStatus(
                 QStringLiteral("Connected to Logos blockchain channel logos:yolo:polling"), true);
 
         } else if (event == QLatin1String("vote")) {
@@ -551,6 +570,7 @@ void PollingCorePlugin::processVoteBridgeOutput()
         } else if (event == QLatin1String("error")) {
             const QString message = obj.value("message").toString();
             qWarning() << "PollingCorePlugin: vote-bridge error:" << message;
+            updateChainStatus(QStringLiteral("Blockchain bridge error: %1").arg(message), false);
         }
     }
 }
