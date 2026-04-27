@@ -1,0 +1,4 @@
+class PollingUi
+{
+    PROP(QString status READWRITE)
+}

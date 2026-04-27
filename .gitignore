@@ -1,0 +1,9 @@
+result
+result-*
+build/
+core/result
+core/result-*
+core/build/
+ui/result
+ui/result-*
+ui/build/
