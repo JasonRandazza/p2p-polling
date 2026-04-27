@@ -13,4 +13,6 @@ logos_module(
         src/polling_core_interface.h
         src/polling_core_plugin.h
         src/polling_core_plugin.cpp
+    EXTERNAL_LIBS
+        logosdelivery
 )

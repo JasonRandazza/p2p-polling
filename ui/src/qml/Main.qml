@@ -38,7 +38,7 @@ Item {
         }
 
         Text {
-            text: "Local vote state today. Logos Delivery broadcast wiring next."
+            text: "Votes sync through Logos Delivery when peers are online."
             color: root.mutedTextColor
             font.pixelSize: 15
             horizontalAlignment: Text.AlignHCenter
@@ -117,7 +117,10 @@ Item {
 
     Component.onCompleted: {
         if (typeof logos !== "undefined" && logos.onModuleEvent)
+        {
             logos.onModuleEvent("polling_core", "voteSubmitted")
+            logos.onModuleEvent("polling_core", "networkStatusChanged")
+        }
 
         root.refreshCounts()
     }
@@ -125,10 +128,15 @@ Item {
     Connections {
         target: typeof logos !== "undefined" ? logos : null
         function onModuleEventReceived(moduleName, eventName, data) {
-            if (moduleName !== "polling_core" || eventName !== "voteSubmitted")
+            if (moduleName !== "polling_core")
                 return
 
-            if (data && data.length > 1) {
+            if (eventName === "networkStatusChanged" && data && data.length > 0) {
+                root.applyResult(data[0])
+                return
+            }
+
+            if (eventName === "voteSubmitted" && data && data.length > 1) {
                 root.applyResult(data[1])
             } else {
                 root.refreshCounts()
@@ -162,7 +170,9 @@ Item {
 
         var total = result.total !== undefined ? Number(result.total) : root.totalVotes()
         root.errorText = ""
-        root.statusText = "Total local votes: " + total
+        root.statusText = "Total votes: " + total
+        if (result.networkStatus)
+            root.statusText += " | " + String(result.networkStatus)
     }
 
     function refreshCounts() {

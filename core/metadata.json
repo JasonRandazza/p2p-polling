@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "core",
   "category": "network",
-  "description": "Local vote-counting backend for the P2P Polling app",
+  "description": "P2P vote-counting backend for the Logos polling app",
   "main": "polling_core_plugin",
   "dependencies": [],
 
@@ -12,11 +12,16 @@
       "build": [],
       "runtime": []
     },
-    "external_libraries": [],
+    "external_libraries": [
+      {
+        "name": "logosdelivery",
+        "vendor_path": "lib"
+      }
+    ],
     "cmake": {
       "find_packages": [],
       "extra_sources": [],
-      "extra_include_dirs": [],
+      "extra_include_dirs": ["lib"],
       "extra_link_libraries": []
     }
   }
