@@ -10,7 +10,7 @@
 #include <QUuid>
 
 namespace {
-constexpr const char* kPollTopic = "/logos/tutorial/polling/1/vote/proto";
+constexpr const char* kPollTopic = "/logos-polling/1/votes/proto";
 
 QByteArray jsonString(const QJsonObject& object)
 {
