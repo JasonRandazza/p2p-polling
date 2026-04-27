@@ -348,9 +348,10 @@ cp /home/jrazz/logos-bootcamp/p2p-polling/core/vote-bridge/target/release/vote-b
 Latest local verification after resuming development:
 
 - `cargo test --release` in `core/vote-bridge` completed successfully. There are currently 0 Rust unit tests, but the release binary compiles.
-- `curl http://localhost:8080/cryptarchia/info` failed with "Couldn't connect to server".
-- `curl http://localhost:18080/cryptarchia/info` also failed with "Couldn't connect to server".
-- `docker ps` failed because Docker is not available in this WSL distro. Docker Desktop WSL integration likely needs to be enabled before using the local blockchain compose stack from this shell.
+- Initial `curl` checks from inside the default Codex sandbox could not reach `localhost`, but that was a sandbox/network-namespace artifact.
+- Re-running outside the sandbox confirmed the directly-running Linux node is reachable at `http://localhost:8080/cryptarchia/info` and reports `mode: "Online"`.
+- Docker is not required for this setup. The user intentionally runs Logos services directly on Linux.
+- `vote-bridge` was run against `VOTE_NODE_URL=http://localhost:8080` with a timeout and emitted `{"event":"ready"}`. It was stopped before publishing any test votes.
 
 Code fix made in this session:
 
@@ -391,12 +392,19 @@ Both hashes were:
 45c96773f0976869974cc52f268d0fb95346b999ae00cc02270f4009f941339e
 ```
 
-Expected runtime behavior with no blockchain node running:
+Expected runtime behavior if no blockchain node is running:
 
 - Local voting should still increment immediately.
 - Delivery/Waku status should report separately.
 - Blockchain status should remain on a connecting/error/stopped state until a valid node endpoint is reachable.
 - This missing node condition should not block local voting or Waku-based P2P voting.
+
+Expected runtime behavior on this machine now:
+
+- The default `VOTE_NODE_URL=http://localhost:8080` is correct for the directly-running node.
+- `vote-bridge` should emit `ready` shortly after Basecamp loads `polling_core`.
+- The UI should show Delivery and Blockchain status separately.
+- A real vote click may now publish to Waku and attempt an on-chain inscription.
 
 ## Current State (2026-04-27)
 
