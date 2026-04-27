@@ -115,13 +115,34 @@ Item {
         }
     }
 
-    Component.onCompleted: root.refreshCounts()
+    Component.onCompleted: {
+        if (typeof logos !== "undefined" && logos.onModuleEvent)
+            logos.onModuleEvent("polling_core", "voteSubmitted")
+
+        root.refreshCounts()
+    }
+
+    Connections {
+        target: typeof logos !== "undefined" ? logos : null
+        function onModuleEventReceived(moduleName, eventName, data) {
+            if (moduleName !== "polling_core" || eventName !== "voteSubmitted")
+                return
+
+            if (data && data.length > 1) {
+                root.applyResult(data[1])
+            } else {
+                root.refreshCounts()
+            }
+        }
+    }
 
     function countFor(option) {
         return Number(root.counts[option] || 0)
     }
 
     function applyResult(result) {
+        result = root.normalizeResult(result)
+
         if (!result) {
             return
         }
@@ -132,7 +153,11 @@ Item {
         }
 
         if (result.counts) {
-            root.counts = result.counts
+            root.counts = {
+                "Apples": Number(result.counts.Apples || 0),
+                "Bananas": Number(result.counts.Bananas || 0),
+                "Oranges": Number(result.counts.Oranges || 0)
+            }
         }
 
         var total = result.total !== undefined ? Number(result.total) : root.totalVotes()
@@ -162,15 +187,16 @@ Item {
         }
 
         try {
-            if (logos.callModuleAsync) {
-                logos.callModuleAsync("polling_core", method, args, function(result) {
-                    onSuccess(result)
-                })
+            if (logos.callModule) {
+                onSuccess(logos.callModule("polling_core", method, args))
                 return
             }
 
-            if (logos.callModule) {
-                onSuccess(logos.callModule("polling_core", method, args))
+            if (logos.callModuleAsync) {
+                logos.callModuleAsync("polling_core", method, args, function(result) {
+                    if (result !== undefined && result !== null)
+                        onSuccess(result)
+                })
                 return
             }
 
@@ -178,5 +204,18 @@ Item {
         } catch (error) {
             root.errorText = String(error)
         }
+    }
+
+    function normalizeResult(result) {
+        if (typeof result === "string") {
+            try {
+                return JSON.parse(result)
+            } catch (error) {
+                root.errorText = result
+                return null
+            }
+        }
+
+        return result
     }
 }
