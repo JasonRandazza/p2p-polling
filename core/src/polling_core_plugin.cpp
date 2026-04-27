@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QRandomGenerator>
+#include <QSettings>
 #include <QUuid>
 
 namespace {
@@ -46,6 +47,7 @@ PollingCorePlugin::PollingCorePlugin(QObject* parent)
     m_votes.insert("Bananas", 0);
     m_votes.insert("Oranges", 0);
     m_instanceId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    loadVoteCounts();
 }
 
 PollingCorePlugin::~PollingCorePlugin()
@@ -391,6 +393,7 @@ void PollingCorePlugin::recordVote(const QString& option, const QString& source,
 {
     m_seenVoteIds.insert(voteId);
     m_votes[option] = m_votes.value(option).toInt() + 1;
+    saveVoteCounts();
 
     QVariantMap result = snapshot();
     result.insert("ok", true);
@@ -406,4 +409,21 @@ void PollingCorePlugin::updateNetworkStatus(const QString& status, bool ready)
     m_networkReady = ready;
 
     emit eventResponse("networkStatusChanged", QVariantList() << snapshot());
+}
+
+void PollingCorePlugin::loadVoteCounts()
+{
+    QSettings settings(QStringLiteral("Logos"), QStringLiteral("polling_core"));
+    for (auto it = m_votes.begin(); it != m_votes.end(); ++it) {
+        it.value() = settings.value(it.key(), 0).toInt();
+    }
+    qDebug() << "PollingCorePlugin: loaded vote counts from storage";
+}
+
+void PollingCorePlugin::saveVoteCounts()
+{
+    QSettings settings(QStringLiteral("Logos"), QStringLiteral("polling_core"));
+    for (auto it = m_votes.constBegin(); it != m_votes.constEnd(); ++it) {
+        settings.setValue(it.key(), it.value().toInt());
+    }
 }

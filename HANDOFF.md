@@ -88,14 +88,16 @@ void logosdelivery_set_event_callback(void *ctx, FFICallBack callback, void *use
 The polling content topic is:
 
 ```text
-/logos/tutorial/polling/1/vote/proto
+/logos-polling/1/votes/proto
 ```
+
+**Critical note:** Waku content topics must be exactly 4 segments (`/<application>/<version>/<topic-name>/<encoding>`) or 5 segments (`/<gen>/<application>/<version>/<topic-name>/<encoding>`). An earlier version of this code used `/logos/tutorial/polling/1/vote/proto` (6 segments), which caused `logosdelivery_subscribe` to silently fail, keeping `m_networkReady = false` permanently and preventing all broadcasts.
 
 Vote messages are JSON payloads, base64 encoded into the Delivery send envelope:
 
 ```json
 {
-  "contentTopic": "/logos/tutorial/polling/1/vote/proto",
+  "contentTopic": "/logos-polling/1/votes/proto",
   "payload": "<base64 JSON vote>",
   "ephemeral": false
 }
@@ -167,7 +169,7 @@ Important behavior:
   - `preset: "logos.dev"`
   - randomized `portsShift` to reduce port collisions when running multiple local Basecamp instances.
 - Starts the Delivery node asynchronously.
-- Subscribes to `/logos/tutorial/polling/1/vote/proto`.
+- Subscribes to `/logos-polling/1/votes/proto`.
 - On local `submitVote(QString option)`:
   - validates option
   - records local vote immediately
@@ -181,43 +183,78 @@ Important behavior:
   - validates option
   - records network vote
   - emits `voteSubmitted`
+- Persists vote counts via `QSettings("Logos", "polling_core")` after each vote; loads persisted counts in constructor.
 - Emits `networkStatusChanged` when Delivery status changes.
 - Shuts down Delivery in the destructor.
 
 ### `ui/src/qml/Main.qml`
 
 - Dark themed polling UI.
-- Calls core through `logos.callModuleAsync(...)`.
+- Calls core through `logos.callModuleAsync(...)` (falls back to sync `logos.callModule`).
 - Subscribes to:
   - `voteSubmitted`
   - `networkStatusChanged`
 - Updates displayed counts from core snapshots.
-- Shows total votes and network status.
+- Shows total votes and network status in the status bar.
+- **Loading state:** While a vote is in-flight, the clicked button changes to "Sending..." and all vote buttons are disabled.
+- **Toast notifications:** When a remote vote arrives (`source === "network"`), a pill-shaped overlay slides in from the top reading "New vote received for [Option]!" and auto-dismisses after 3 seconds.
 
-## Previous Bug Fixes Already Landed Before This Work
+## Bug Fixes and Runtime Verification
 
-These were already committed before the Delivery work:
+Committed before Delivery work:
 
 - Fixed `callModuleAsync` overload errors by passing a callback argument.
 - Fixed core Logos API initialization so `QtProviderObject::callMethod: LogosAPI not available` no longer blocks calls.
 - Fixed UI to update from core events after votes.
 
-Existing commits at the time of this handoff:
+Critical P2P bug fixed during runtime testing:
+
+- **Bug:** Content topic `/logos/tutorial/polling/1/vote/proto` (6 path segments) caused `logosdelivery_subscribe` to fail silently. `m_networkReady` was always `false`, so `broadcastVote` never sent anything.
+- **Fix:** Changed to `/logos-polling/1/votes/proto` (4 path segments). Committed in `1a7913f Expand project handoff notes`.
+
+Confirmed working end-to-end in Basecamp (2026-04-27):
+
+- Two Basecamp instances launched simultaneously on the same machine.
+- Voted in instance A → appeared in instance B within seconds.
+- Voted in instance B → appeared in instance A.
+- Deduplication confirmed: no double-counting of the same vote ID.
+- Self-message filtering confirmed: own votes not double-counted from relay echo.
+
+Commit history:
 
 - `2ac2bb3 Create P2P polling Logos modules`
 - `f34539a Fix polling UI async module calls`
 - `9540338 Fix polling core LogosAPI initialization`
 - `6e095e3 Update polling UI from core vote events`
 - `0521618 Wire polling app to Logos Delivery`
+- `1a7913f Expand project handoff notes`
 
-## Final Checkpoint From This Session
+## Session 2 Additions (2026-04-27)
 
-The Delivery networking checkpoint is committed and pushed to GitHub.
+### Persistent vote counts
 
-- Commit: `0521618 Wire polling app to Logos Delivery`
-- Branch: `main`
-- Remote: `https://github.com/JasonRandazza/p2p-polling.git`
-- Local git status was clean immediately after pushing this commit.
+Vote counts survive Basecamp restarts. The core saves counts after each `recordVote` call using `QSettings("Logos", "polling_core")` and loads them in the constructor. Storage location is the platform default (`~/.config/Logos/polling_core.conf` on Linux).
+
+### UI loading state
+
+Clicking a vote button sets it to "Sending..." and disables all three buttons. They re-enable when the IPC callback returns.
+
+### Toast notifications for remote votes
+
+When a `voteSubmitted` event arrives with `source === "network"`, a pill-shaped overlay slides in from the top of the UI reading "New vote received for [Option]!" and auto-dismisses after 3 seconds.
+
+### Portable build note
+
+`nix build .#lgx-portable` (without `--impure`) succeeds on this machine because the `logos-delivery` flake lock file contains a `narHash` and the content is already in the nix store from previous impure builds. On a fresh machine the first build still requires `--impure`. The portable output contains the `linux-amd64` variant (not `linux-amd64-dev`) — do NOT install the portable into `LogosBasecampDev`.
+
+## Current State (2026-04-27)
+
+Both packages built and installed into `LogosBasecampDev`:
+
+- Core: persistent storage, P2P broadcast/receive, deduplication, network status events
+- UI: vote cards, loading state, toast notifications, status bar with network info
+
+All checklist items through multi-instance P2P verified working.
 
 What was proven by builds:
 

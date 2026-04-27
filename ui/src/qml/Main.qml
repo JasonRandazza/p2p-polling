@@ -8,6 +8,9 @@ Item {
     property var counts: ({ "Apples": 0, "Bananas": 0, "Oranges": 0 })
     property string statusText: "Ready to vote"
     property string errorText: ""
+    property string votingFor: ""
+    property string toastMessage: ""
+    property bool toastVisible: false
 
     readonly property var options: ["Apples", "Bananas", "Oranges"]
     readonly property color backgroundColor: "#20242a"
@@ -87,10 +90,11 @@ Item {
                         }
 
                         Button {
-                            text: "Vote"
+                            text: root.votingFor === modelData ? "Sending..." : "Vote"
                             Layout.alignment: Qt.AlignHCenter
                             implicitWidth: 116
                             implicitHeight: 38
+                            enabled: root.votingFor === ""
                             onClicked: root.submitVote(modelData)
                         }
                     }
@@ -112,6 +116,37 @@ Item {
                 color: root.errorText.length > 0 ? root.warningColor : root.accentColor
                 font.pixelSize: 14
             }
+        }
+    }
+
+    Timer {
+        id: toastTimer
+        interval: 3000
+        repeat: false
+        onTriggered: root.toastVisible = false
+    }
+
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: root.toastVisible ? 20 : -56
+        width: toastLabel.implicitWidth + 40
+        height: 44
+        z: 100
+        radius: 22
+        color: "#1e3a2f"
+        border.color: root.accentColor
+        border.width: 1
+        opacity: root.toastVisible ? 1.0 : 0.0
+
+        Behavior on y { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+
+        Text {
+            id: toastLabel
+            anchors.centerIn: parent
+            text: root.toastMessage
+            color: root.accentColor
+            font.pixelSize: 13
         }
     }
 
@@ -137,7 +172,11 @@ Item {
             }
 
             if (eventName === "voteSubmitted" && data && data.length > 1) {
+                var result = root.normalizeResult(data[1])
                 root.applyResult(data[1])
+                if (result && result.source === "network") {
+                    root.showToast("New vote received for " + String(data[0]) + "!")
+                }
             } else {
                 root.refreshCounts()
             }
@@ -180,8 +219,12 @@ Item {
     }
 
     function submitVote(option) {
+        root.votingFor = option
         root.statusText = "Submitting vote for " + option + "..."
-        callCore("submitVote", [option], applyResult)
+        callCore("submitVote", [option], function(result) {
+            root.votingFor = ""
+            root.applyResult(result)
+        })
     }
 
     function totalVotes() {
@@ -214,6 +257,12 @@ Item {
         } catch (error) {
             root.errorText = String(error)
         }
+    }
+
+    function showToast(message) {
+        root.toastMessage = message
+        root.toastVisible = true
+        toastTimer.restart()
     }
 
     function normalizeResult(result) {

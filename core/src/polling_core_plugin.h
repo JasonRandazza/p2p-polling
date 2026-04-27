@@ -52,6 +52,8 @@ private:
     void processRemoteVote(const QByteArray& payload);
     void recordVote(const QString& option, const QString& source, const QString& voteId);
     void updateNetworkStatus(const QString& status, bool ready);
+    void loadVoteCounts();
+    void saveVoteCounts();
 
     LogosModules* m_logos = nullptr;
     QVariantMap m_votes;
