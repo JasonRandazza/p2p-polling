@@ -38,7 +38,9 @@ nix build .#lgx-portable --impure
 The UI and core are separate Logos modules and run in separate processes. The QML frontend calls backend methods through the Logos bridge:
 
 ```qml
-logos.callModuleAsync("polling_core", "submitVote", [option])
+logos.callModuleAsync("polling_core", "submitVote", [option], function(result) {
+    // update QML state from result
+})
 ```
 
 Backend methods that are available to the UI are marked `Q_INVOKABLE`.

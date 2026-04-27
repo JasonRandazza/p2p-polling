@@ -163,14 +163,9 @@ Item {
 
         try {
             if (logos.callModuleAsync) {
-                var pending = logos.callModuleAsync("polling_core", method, args)
-                if (pending && pending.then) {
-                    pending.then(onSuccess).catch(function(error) {
-                        root.errorText = String(error)
-                    })
-                } else {
-                    onSuccess(pending)
-                }
+                logos.callModuleAsync("polling_core", method, args, function(result) {
+                    onSuccess(result)
+                })
                 return
             }
 
