@@ -12,6 +12,36 @@ This document captures the current project context and progress for another codi
   - UI plugins: `/home/jrazz/.local/share/Logos/LogosBasecampDev/plugins`
 - GitHub repo: `https://github.com/JasonRandazza/p2p-polling`
 
+## AI Context Files To Read First
+
+Before changing code, another AI agent should read these local context files. They contain important Logos-specific assumptions that are easy to miss.
+
+- `/home/jrazz/logos-bootcamp/skills.md`
+  - High-level Logos ecosystem context: Nomos, LEZ, SPEL, wallet, and related command patterns.
+  - This is broader than Basecamp, but useful for avoiding bad architecture assumptions.
+- `/home/jrazz/logos-bootcamp/.gemini/skills/logos-messaging-nim/SKILL.md`
+  - Messaging/Delivery/Waku/Nim context. Most relevant for future `logos-delivery` work.
+- `/home/jrazz/logos-bootcamp/.gemini/skills/logos-c-bindings/SKILL.md`
+  - C FFI binding guidance. Relevant because this app currently links `polling_core` directly to `liblogosdelivery`.
+- `/home/jrazz/logos-bootcamp/.gemini/skills/logos-testnets/SKILL.md`
+  - Testnet/node/relay context. Relevant when testing real peer-to-peer propagation.
+- `/home/jrazz/logos-bootcamp/.gemini/skills/nomos-blockchain/SKILL.md`
+  - Blockchain context. Less relevant to local UI behavior, but relevant if this app later anchors votes or identity on Nomos.
+- `/home/jrazz/logos-bootcamp/.gemini/skills/codex-js-sdk/SKILL.md`
+  - JavaScript SDK context. Not directly used in the current Qt/C++ module, but useful if a web bridge or JS tooling is added.
+- `/home/jrazz/logos-bootcamp/logos-tutorial/logos-developer-guide.md`
+  - Logos module packaging, IPC, `.lgx` variants, and Basecamp install behavior.
+- `/home/jrazz/logos-bootcamp/logos-tutorial/tutorial-qml-ui-app.md`
+  - QML UI module patterns and dev-vs-portable install notes.
+- `/home/jrazz/logos-bootcamp/logos-tutorial/tutorial-wrapping-c-library.md`
+  - External library packaging details. Relevant to bundling `liblogosdelivery.so`.
+- `/home/jrazz/logos-bootcamp/logos-delivery/liblogosdelivery/README.md`
+  - Primary source for the local Delivery C FFI.
+- `/home/jrazz/logos-bootcamp/logos-delivery/liblogosdelivery/MESSAGE_EVENTS.md`
+  - Delivery event shapes and callback behavior.
+
+The `.gemini/skills/*/references`, `scripts`, and `assets` folders may also contain useful details, but do not bulk-load them. Open the specific reference needed for the task.
+
 ## Goal
 
 Build a Logos Basecamp "P2P Polling App" with:
@@ -178,6 +208,43 @@ Existing commits at the time of this handoff:
 - `f34539a Fix polling UI async module calls`
 - `9540338 Fix polling core LogosAPI initialization`
 - `6e095e3 Update polling UI from core vote events`
+- `0521618 Wire polling app to Logos Delivery`
+
+## Final Checkpoint From This Session
+
+The Delivery networking checkpoint is committed and pushed to GitHub.
+
+- Commit: `0521618 Wire polling app to Logos Delivery`
+- Branch: `main`
+- Remote: `https://github.com/JasonRandazza/p2p-polling.git`
+- Local git status was clean immediately after pushing this commit.
+
+What was proven by builds:
+
+- `liblogosdelivery` built successfully from the local `logos-delivery` checkout.
+- `polling_core` compiled and linked successfully against `liblogosdelivery.so`.
+- The fresh core package bundled `liblogosdelivery.so` with `polling_core_plugin.so`.
+- The UI package generated and consumed the fresh `polling_core_api.h` from the rebuilt core.
+- Both core and UI dev `.lgx` packages installed successfully into `LogosBasecampDev`.
+
+Installed files to verify:
+
+```text
+/home/jrazz/.local/share/Logos/LogosBasecampDev/modules/polling_core/polling_core_plugin.so
+/home/jrazz/.local/share/Logos/LogosBasecampDev/modules/polling_core/liblogosdelivery.so
+/home/jrazz/.local/share/Logos/LogosBasecampDev/modules/polling_core/variant
+/home/jrazz/.local/share/Logos/LogosBasecampDev/plugins/polling_ui/polling_ui_plugin.so
+/home/jrazz/.local/share/Logos/LogosBasecampDev/plugins/polling_ui/polling_ui_replica_factory.so
+/home/jrazz/.local/share/Logos/LogosBasecampDev/plugins/polling_ui/qml/Main.qml
+```
+
+The installed dev variant should be:
+
+```text
+linux-amd64-dev
+```
+
+Important realization: `LogosBasecampDev` needs `.#lgx` packages, not `.#lgx-portable`. The portable package was valid, but `lgpm` rejected it for the dev install because it contained `linux-amd64` while the dev install expects `linux-amd64-dev`.
 
 ## Current Build State
 
@@ -239,13 +306,7 @@ nix build .#lib -L --impure
 
 ## Next Steps
 
-1. Test in Basecamp:
-   - Launch Basecamp.
-   - Open `polling_ui`.
-   - Confirm initial counts load.
-   - Click each vote button.
-   - Confirm counts change immediately.
-   - Confirm logs show Delivery start/subscribe status.
+1. Test in Basecamp using the already-installed dev packages.
 
 2. If runtime loading fails:
    - Check whether `polling_core` starts and whether `liblogosdelivery.so` is present in `/home/jrazz/.local/share/Logos/LogosBasecampDev/modules/polling_core`.
@@ -267,6 +328,82 @@ find /home/jrazz/logos-bootcamp/p2p-polling -maxdepth 4 -name '*.lgx'
    - Run two Basecamp instances if RAM allows.
    - Vote in instance A.
    - Instance B should receive `message_received` and update.
+
+## Testing Checklist
+
+Run these tests in order. Stop at the first failure and inspect logs before changing code.
+
+### Single-Instance Smoke Test
+
+- Launch the dev Basecamp app.
+- Open `polling_ui` from the app launcher.
+- Confirm the UI loads without QML errors.
+- Confirm the UI shows the three options: Apples, Bananas, Oranges.
+- Confirm initial counts load from `polling_core`.
+- Click Apples once.
+- Confirm Apples increments immediately.
+- Click Bananas once.
+- Confirm Bananas increments immediately.
+- Click Oranges once.
+- Confirm Oranges increments immediately.
+- Confirm the total vote count equals the sum of the three option counts.
+
+### IPC/Event Test
+
+- Watch Basecamp logs while clicking buttons.
+- Confirm `polling_core` loads as a dependency for `polling_ui`.
+- Confirm `submitVote` calls reach `polling_core`.
+- Confirm `voteSubmitted` events are forwarded from the core.
+- Confirm the UI updates from the event payload, not only from the immediate async call result.
+- Confirm no `Unable to determine callable overload` errors appear. That old bug was fixed by passing a callback to `callModuleAsync`.
+- Confirm no `QtProviderObject::callMethod: LogosAPI not available` errors block method calls. That old bug was fixed by assigning the global `logosAPI` in `initLogos`.
+
+### Delivery Startup Test
+
+- Check logs for Delivery node initialization.
+- Confirm `logosdelivery_create_node` completes successfully.
+- Confirm `logosdelivery_start_node` completes successfully.
+- Confirm subscription to `/logos/tutorial/polling/1/vote/proto` completes successfully.
+- Confirm the UI status text eventually reflects the Delivery network state.
+- If Delivery fails to start, inspect the status emitted by `networkStatusChanged`.
+
+### Local Broadcast Test
+
+- Click a vote after Delivery is ready.
+- Confirm logs show the local vote was recorded.
+- Confirm logs show `logosdelivery_send` or a related send operation.
+- Confirm send failures update network status without rolling back the local vote.
+
+### Multi-Instance Test
+
+- Start two Basecamp instances if RAM allows.
+- Open `polling_ui` in both.
+- Wait for both to show Delivery readiness or at least a non-crashing status.
+- Vote Apples in instance A.
+- Confirm instance A increments immediately.
+- Watch instance B for a remote update.
+- Vote Bananas in instance B.
+- Confirm instance A receives the remote update.
+- Confirm duplicate self-messages do not double-count. The core ignores messages where `sender == m_instanceId` and deduplicates vote IDs.
+
+### Network Environment Test
+
+- If multi-instance or cross-machine sync fails, verify WSL2 networking and Windows Firewall.
+- Confirm any required Delivery peers/relays are running and reachable.
+- Remember: a blockchain node is not required for local UI vote clicks. Real P2P propagation depends on Delivery networking, peers/relays, and firewall access.
+
+### Packaging/Install Test
+
+- Confirm `polling_core` install contains `liblogosdelivery.so`.
+- Confirm both installed `variant` files say `linux-amd64-dev` for `LogosBasecampDev`.
+- If using portable Basecamp instead, rebuild and install `.#lgx-portable` outputs into the portable Basecamp data directory, not `LogosBasecampDev`.
+
+### Regression Tests
+
+- Reopen Basecamp after closing it fully.
+- Open `polling_ui` again and confirm it still loads.
+- Click all three options.
+- Confirm no stale module from an older install is being loaded. If behavior looks stale, check timestamps and installed files under `LogosBasecampDev`.
 
 ## Caveats
 
