@@ -35,7 +35,6 @@ private:
     QVariantMap snapshot() const;
     bool isValidOption(const QString& option) const;
 
-    LogosAPI* m_logosAPI = nullptr;
     LogosModules* m_logos = nullptr;
     QVariantMap m_votes;
 };

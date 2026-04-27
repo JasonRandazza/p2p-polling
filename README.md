@@ -44,3 +44,5 @@ logos.callModuleAsync("polling_core", "submitVote", [option], function(result) {
 ```
 
 Backend methods that are available to the UI are marked `Q_INVOKABLE`.
+
+Core modules must assign the global `logosAPI` pointer in `initLogos`; storing the pointer only on the plugin instance prevents the Logos provider from dispatching remote method calls.

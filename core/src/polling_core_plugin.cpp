@@ -15,16 +15,16 @@ PollingCorePlugin::~PollingCorePlugin()
     delete m_logos;
 }
 
-void PollingCorePlugin::initLogos(LogosAPI* logosAPIInstance)
+void PollingCorePlugin::initLogos(LogosAPI* api)
 {
     if (m_logos) {
         delete m_logos;
         m_logos = nullptr;
     }
 
-    m_logosAPI = logosAPIInstance;
-    if (m_logosAPI) {
-        m_logos = new LogosModules(m_logosAPI);
+    logosAPI = api;
+    if (logosAPI) {
+        m_logos = new LogosModules(logosAPI);
     }
 
     qDebug() << "PollingCorePlugin: initialized";
