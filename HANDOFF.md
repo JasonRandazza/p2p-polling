@@ -413,6 +413,31 @@ Expected runtime behavior on this machine now:
 - The UI should show Delivery and Blockchain status separately.
 - A real vote click may now publish to Waku and attempt an on-chain inscription.
 
+### Startup Replay Fix
+
+Observed issue: after blockchain sync was enabled, opening the module could add historical Apples votes again on each launch. Manual vote clicks still synced correctly between instances, but startup backfill was being counted repeatedly.
+
+Root causes:
+
+- `polling_core` persisted vote counts but did not persist `m_seenVoteIds`, so old blockchain votes were not recognized after restart.
+- `vote-bridge` started its indexer from slot `0` every process start, so it replayed the full channel history each time.
+
+Fix:
+
+- `polling_core` now stores `seenVoteIds` in `QSettings("Logos", "polling_core")` along with the counts.
+- `vote-bridge` now stores the next indexer slot in `VOTE_DATA_DIR/vote_bridge.indexer_slot`.
+- The installed sidecar hash after rebuild/copy is:
+
+```text
+d5cf7ccc04b332ba8b36b4f9d3bcfc9ed7667fda09c098e28a6228b667c9c051
+```
+
+Expected behavior after this fix:
+
+- The first launch after upgrading from the old build may still process old chain votes once if no `seenVoteIds` or indexer slot exists yet.
+- After that first catch-up, repeated open/close cycles should not keep adding the same old votes.
+- Logs should show `ignored duplicate blockchain vote <id>` for already-counted votes.
+
 ## Current State (2026-04-27)
 
 Both packages built and installed into `LogosBasecampDev`:

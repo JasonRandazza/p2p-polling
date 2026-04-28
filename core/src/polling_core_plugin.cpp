@@ -13,6 +13,7 @@
 #include <QRandomGenerator>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QUuid>
 
 namespace {
@@ -52,7 +53,7 @@ PollingCorePlugin::PollingCorePlugin(QObject* parent)
     m_votes.insert("Bananas", 0);
     m_votes.insert("Oranges", 0);
     m_instanceId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    loadVoteCounts();
+    loadVoteState();
 }
 
 PollingCorePlugin::~PollingCorePlugin()
@@ -443,7 +444,7 @@ void PollingCorePlugin::recordVote(const QString& option, const QString& source,
 {
     m_seenVoteIds.insert(voteId);
     m_votes[option] = m_votes.value(option).toInt() + 1;
-    saveVoteCounts();
+    saveVoteState();
 
     qInfo() << "PollingCorePlugin: recorded vote" << voteId << "for" << option
             << "source" << source << "count" << m_votes.value(option).toInt();
@@ -619,19 +620,34 @@ void PollingCorePlugin::processVoteBridgeOutput()
     }
 }
 
-void PollingCorePlugin::loadVoteCounts()
+void PollingCorePlugin::loadVoteState()
 {
     QSettings settings(QStringLiteral("Logos"), QStringLiteral("polling_core"));
     for (auto it = m_votes.begin(); it != m_votes.end(); ++it) {
         it.value() = settings.value(it.key(), 0).toInt();
     }
-    qDebug() << "PollingCorePlugin: loaded vote counts from storage";
+
+    const QStringList seenVoteIds = settings.value(QStringLiteral("seenVoteIds")).toStringList();
+    for (const QString& voteId : seenVoteIds) {
+        if (!voteId.isEmpty()) {
+            m_seenVoteIds.insert(voteId);
+        }
+    }
+
+    qDebug() << "PollingCorePlugin: loaded vote state from storage - seen vote ids" << m_seenVoteIds.size();
 }
 
-void PollingCorePlugin::saveVoteCounts()
+void PollingCorePlugin::saveVoteState()
 {
     QSettings settings(QStringLiteral("Logos"), QStringLiteral("polling_core"));
     for (auto it = m_votes.constBegin(); it != m_votes.constEnd(); ++it) {
         settings.setValue(it.key(), it.value().toInt());
     }
+
+    QStringList seenVoteIds;
+    seenVoteIds.reserve(m_seenVoteIds.size());
+    for (const QString& voteId : m_seenVoteIds) {
+        seenVoteIds.append(voteId);
+    }
+    settings.setValue(QStringLiteral("seenVoteIds"), seenVoteIds);
 }

@@ -54,8 +54,8 @@ private:
     void recordVote(const QString& option, const QString& source, const QString& voteId);
     void updateNetworkStatus(const QString& status, bool ready);
     void updateChainStatus(const QString& status, bool ready);
-    void loadVoteCounts();
-    void saveVoteCounts();
+    void loadVoteState();
+    void saveVoteState();
 
     // Blockchain channel inscription bridge
     void startVoteBridge();

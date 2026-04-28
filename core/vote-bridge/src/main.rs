@@ -111,6 +111,25 @@ fn sidecar_path(checkpoint_path: &Path) -> PathBuf {
     p
 }
 
+fn load_indexer_slot(path: &Path) -> Slot {
+    let Some(contents) = fs::read_to_string(path).ok() else {
+        return Slot::new(0);
+    };
+
+    contents
+        .trim()
+        .parse::<u64>()
+        .map(Slot::new)
+        .unwrap_or_else(|_| Slot::new(0))
+}
+
+fn save_indexer_slot(path: &Path, slot: Slot) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::write(path, slot.into_inner().to_string()).ok();
+}
+
 // ── Protocol types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -165,8 +184,14 @@ fn parse_zone_block(block: &ZoneBlock) -> Option<Event> {
 // Uses NodeHttpClient directly (not ZoneIndexer::follow) to avoid the
 // `impl Stream + '_` lifetime constraint that is incompatible with tokio::spawn.
 
-async fn run_indexer(node: NodeHttpClient, channel_id: ChannelId, vote_tx: mpsc::Sender<Event>) {
-    let mut last_slot = Slot::new(0);
+async fn run_indexer(
+    node: NodeHttpClient,
+    channel_id: ChannelId,
+    vote_tx: mpsc::Sender<Event>,
+    indexer_slot_path: PathBuf,
+) {
+    let mut last_slot = load_indexer_slot(&indexer_slot_path);
+    eprintln!("vote-bridge: indexer starting from slot {last_slot:?}");
 
     loop {
         let current_slot = match node.consensus_info().await {
@@ -193,6 +218,7 @@ async fn run_indexer(node: NodeHttpClient, channel_id: ChannelId, vote_tx: mpsc:
                         }
                     }
                     last_slot = Slot::new(current_slot.into_inner() + 1);
+                    save_indexer_slot(&indexer_slot_path, last_slot);
                 }
                 Err(e) => {
                     eprintln!("vote-bridge: scan error ({last_slot:?}–{current_slot:?}): {e}");
@@ -220,6 +246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let channel_id = polling_channel_id();
     let key = load_or_create_key(&data_dir.join("vote_bridge.key"));
     let checkpoint_path = data_dir.join("vote_bridge.checkpoint");
+    let indexer_slot_path = data_dir.join("vote_bridge.indexer_slot");
     let checkpoint = load_checkpoint(&checkpoint_path, channel_id);
 
     let client = CommonHttpClient::new(None);
@@ -235,7 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Indexer task (polling) ────────────────────────────────────────────────
     let (vote_tx, mut vote_rx) = mpsc::channel::<Event>(64);
-    tokio::spawn(run_indexer(node, channel_id, vote_tx));
+    tokio::spawn(run_indexer(node, channel_id, vote_tx, indexer_slot_path));
 
     // ── Stdin command reader ──────────────────────────────────────────────────
     // Stdin is blocking, so read it on a dedicated OS thread and forward
