@@ -363,6 +363,13 @@ Code fix made in this session:
 - Missing, failed, stopped, or errored `vote-bridge` states are surfaced to the UI instead of being mostly log-only.
 - The UI status panel now displays Delivery and Blockchain status on separate lines.
 - The Delivery test checklist was corrected to use `/logos-polling/1/votes/proto`, not the earlier invalid six-segment topic.
+- Added app-specific vote audit logs in `polling_core_plugin.cpp` so future tests can trace one vote ID across local recording, Waku broadcast/receive, blockchain publish/receive, and duplicate/self-message ignores.
+
+Useful audit filter:
+
+```bash
+rg "broadcasting Waku vote|publishing blockchain vote|received Waku vote|received blockchain vote|recorded vote|ignored own|ignored duplicate|skipped Waku|skipped blockchain" ~/basecamp-polling.log
+```
 
 Build/install verification after these fixes:
 

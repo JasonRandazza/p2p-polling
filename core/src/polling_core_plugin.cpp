@@ -320,6 +320,8 @@ void PollingCorePlugin::broadcastVote(const QString& option, const QString& vote
 {
     // Waku P2P broadcast (fast, low-latency)
     if (m_delivery && m_networkReady) {
+        qInfo() << "PollingCorePlugin: broadcasting Waku vote" << voteId << "for" << option;
+
         const QJsonObject vote {
             { "type", "vote" },
             { "id", voteId },
@@ -336,12 +338,18 @@ void PollingCorePlugin::broadcastVote(const QString& option, const QString& vote
         const QByteArray messageJson = jsonString(envelope);
         const int sendResult = logosdelivery_send(m_delivery, deliveryOperationCallback, this, messageJson.constData());
         if (sendResult != RET_OK) {
+            qWarning() << "PollingCorePlugin: Waku vote send request failed" << voteId << "for" << option;
             updateNetworkStatus(QStringLiteral("Logos Delivery send request failed"), false);
         }
+    } else {
+        qInfo() << "PollingCorePlugin: skipped Waku vote broadcast" << voteId << "for" << option
+                << "- deliveryReady=" << m_networkReady;
     }
 
     // Blockchain inscription (permanent, on-chain record)
     if (m_voteBridge && m_voteBridge->state() == QProcess::Running) {
+        qInfo() << "PollingCorePlugin: publishing blockchain vote" << voteId << "for" << option;
+
         const QJsonObject cmd {
             { "cmd", "publish" },
             { "option", option },
@@ -349,6 +357,9 @@ void PollingCorePlugin::broadcastVote(const QString& option, const QString& vote
             { "sender", m_instanceId }
         };
         writeVoteBridge(jsonString(cmd) + '\n');
+    } else {
+        qInfo() << "PollingCorePlugin: skipped blockchain vote publish" << voteId << "for" << option
+                << "- vote-bridge not running";
     }
 }
 
@@ -404,10 +415,27 @@ void PollingCorePlugin::processRemoteVote(const QByteArray& payload)
     const QString voteId = vote.value("id").toString();
     const QString option = vote.value("option").toString();
 
-    if (sender == m_instanceId || voteId.isEmpty() || m_seenVoteIds.contains(voteId) || !isValidOption(option)) {
+    if (sender == m_instanceId) {
+        qInfo() << "PollingCorePlugin: ignored own Waku vote" << voteId << "for" << option;
         return;
     }
 
+    if (voteId.isEmpty()) {
+        qWarning() << "PollingCorePlugin: ignored Waku vote with missing id for" << option;
+        return;
+    }
+
+    if (m_seenVoteIds.contains(voteId)) {
+        qInfo() << "PollingCorePlugin: ignored duplicate Waku vote" << voteId << "for" << option;
+        return;
+    }
+
+    if (!isValidOption(option)) {
+        qWarning() << "PollingCorePlugin: ignored Waku vote" << voteId << "with invalid option" << option;
+        return;
+    }
+
+    qInfo() << "PollingCorePlugin: received Waku vote" << voteId << "for" << option << "from" << sender;
     recordVote(option, QStringLiteral("network"), voteId);
 }
 
@@ -416,6 +444,9 @@ void PollingCorePlugin::recordVote(const QString& option, const QString& source,
     m_seenVoteIds.insert(voteId);
     m_votes[option] = m_votes.value(option).toInt() + 1;
     saveVoteCounts();
+
+    qInfo() << "PollingCorePlugin: recorded vote" << voteId << "for" << option
+            << "source" << source << "count" << m_votes.value(option).toInt();
 
     QVariantMap result = snapshot();
     result.insert("ok", true);
@@ -557,14 +588,27 @@ void PollingCorePlugin::processVoteBridgeOutput()
             // Reuse the same deduplication as the Waku path.
             // The vote payload on-chain carries the same UUID, so a vote
             // delivered by both Waku and the blockchain is only counted once.
-            if (sender == m_instanceId
-                || voteId.isEmpty()
-                || m_seenVoteIds.contains(voteId)
-                || !isValidOption(option)) {
+            if (sender == m_instanceId) {
+                qInfo() << "PollingCorePlugin: ignored own blockchain vote" << voteId << "for" << option;
                 continue;
             }
 
-            qDebug() << "PollingCorePlugin: blockchain vote received for" << option;
+            if (voteId.isEmpty()) {
+                qWarning() << "PollingCorePlugin: ignored blockchain vote with missing id for" << option;
+                continue;
+            }
+
+            if (m_seenVoteIds.contains(voteId)) {
+                qInfo() << "PollingCorePlugin: ignored duplicate blockchain vote" << voteId << "for" << option;
+                continue;
+            }
+
+            if (!isValidOption(option)) {
+                qWarning() << "PollingCorePlugin: ignored blockchain vote" << voteId << "with invalid option" << option;
+                continue;
+            }
+
+            qInfo() << "PollingCorePlugin: received blockchain vote" << voteId << "for" << option << "from" << sender;
             recordVote(option, QStringLiteral("network"), voteId);
 
         } else if (event == QLatin1String("error")) {
