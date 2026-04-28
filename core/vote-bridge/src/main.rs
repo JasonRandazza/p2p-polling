@@ -111,16 +111,16 @@ fn sidecar_path(checkpoint_path: &Path) -> PathBuf {
     p
 }
 
-fn load_indexer_slot(path: &Path) -> Slot {
+fn load_indexer_slot(path: &Path) -> Option<Slot> {
     let Some(contents) = fs::read_to_string(path).ok() else {
-        return Slot::new(0);
+        return None;
     };
 
     contents
         .trim()
         .parse::<u64>()
         .map(Slot::new)
-        .unwrap_or_else(|_| Slot::new(0))
+        .ok()
 }
 
 fn save_indexer_slot(path: &Path, slot: Slot) {
@@ -189,9 +189,10 @@ async fn run_indexer(
     channel_id: ChannelId,
     vote_tx: mpsc::Sender<Event>,
     indexer_slot_path: PathBuf,
+    start_at_tip_if_missing: bool,
 ) {
     let mut last_slot = load_indexer_slot(&indexer_slot_path);
-    eprintln!("vote-bridge: indexer starting from slot {last_slot:?}");
+    eprintln!("vote-bridge: loaded indexer slot {last_slot:?}");
 
     loop {
         let current_slot = match node.consensus_info().await {
@@ -203,9 +204,19 @@ async fn run_indexer(
             }
         };
 
-        if current_slot.into_inner() >= last_slot.into_inner() {
+        if last_slot.is_none() && start_at_tip_if_missing {
+            let next_slot = Slot::new(current_slot.into_inner() + 1);
+            eprintln!("vote-bridge: no indexer slot; starting at current tip {next_slot:?}");
+            save_indexer_slot(&indexer_slot_path, next_slot);
+            last_slot = Some(next_slot);
+            tokio::time::sleep(POLL_INTERVAL).await;
+            continue;
+        }
+
+        let scan_from = last_slot.unwrap_or_else(|| Slot::new(0));
+        if current_slot.into_inner() >= scan_from.into_inner() {
             match node
-                .zone_messages_in_blocks(last_slot, current_slot, channel_id)
+                .zone_messages_in_blocks(scan_from, current_slot, channel_id)
                 .await
             {
                 Ok(stream) => {
@@ -217,11 +228,12 @@ async fn run_indexer(
                             }
                         }
                     }
-                    last_slot = Slot::new(current_slot.into_inner() + 1);
-                    save_indexer_slot(&indexer_slot_path, last_slot);
+                    let next_slot = Slot::new(current_slot.into_inner() + 1);
+                    last_slot = Some(next_slot);
+                    save_indexer_slot(&indexer_slot_path, next_slot);
                 }
                 Err(e) => {
-                    eprintln!("vote-bridge: scan error ({last_slot:?}–{current_slot:?}): {e}");
+                    eprintln!("vote-bridge: scan error ({scan_from:?}–{current_slot:?}): {e}");
                 }
             }
         }
@@ -247,6 +259,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = load_or_create_key(&data_dir.join("vote_bridge.key"));
     let checkpoint_path = data_dir.join("vote_bridge.checkpoint");
     let indexer_slot_path = data_dir.join("vote_bridge.indexer_slot");
+    let start_at_tip_if_missing = std::env::var("VOTE_BRIDGE_START_AT_TIP")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     let checkpoint = load_checkpoint(&checkpoint_path, channel_id);
 
     let client = CommonHttpClient::new(None);
@@ -262,7 +277,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Indexer task (polling) ────────────────────────────────────────────────
     let (vote_tx, mut vote_rx) = mpsc::channel::<Event>(64);
-    tokio::spawn(run_indexer(node, channel_id, vote_tx, indexer_slot_path));
+    tokio::spawn(run_indexer(
+        node,
+        channel_id,
+        vote_tx,
+        indexer_slot_path,
+        start_at_tip_if_missing,
+    ));
 
     // ── Stdin command reader ──────────────────────────────────────────────────
     // Stdin is blocking, so read it on a dedicated OS thread and forward

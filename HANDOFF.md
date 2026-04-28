@@ -438,6 +438,12 @@ Expected behavior after this fix:
 - After that first catch-up, repeated open/close cycles should not keep adding the same old votes.
 - Logs should show `ignored duplicate blockchain vote <id>` for already-counted votes.
 
+Follow-up hardening:
+
+- If `polling_core` loads legacy local state with non-zero counts but no `seenVoteIds`, it now sets `VOTE_BRIDGE_START_AT_TIP=1` for `vote-bridge`.
+- With that flag and no existing `vote_bridge.indexer_slot`, `vote-bridge` writes the next slot after the current chain tip and skips historical backfill.
+- This preserves chain backfill for fresh installs with zero local counts, but prevents old local installs from double-counting historical chain votes during migration.
+
 ## Current State (2026-04-27)
 
 Both packages built and installed into `LogosBasecampDev`:

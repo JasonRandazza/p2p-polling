@@ -507,6 +507,10 @@ void PollingCorePlugin::startVoteBridge()
     const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
         + QStringLiteral("/.local/share/Logos/polling_core");
     env.insert(QStringLiteral("VOTE_DATA_DIR"), dataDir);
+    if (m_skipInitialBlockchainBackfill) {
+        env.insert(QStringLiteral("VOTE_BRIDGE_START_AT_TIP"), QStringLiteral("1"));
+        qInfo() << "PollingCorePlugin: starting vote-bridge at current tip for legacy local state";
+    }
     const QString nodeUrl = env.value(QStringLiteral("VOTE_NODE_URL"), QStringLiteral("http://localhost:8080"));
     m_voteBridge->setProcessEnvironment(env);
 
@@ -632,6 +636,14 @@ void PollingCorePlugin::loadVoteState()
         if (!voteId.isEmpty()) {
             m_seenVoteIds.insert(voteId);
         }
+    }
+
+    const int total = m_votes.value("Apples").toInt()
+        + m_votes.value("Bananas").toInt()
+        + m_votes.value("Oranges").toInt();
+    m_skipInitialBlockchainBackfill = total > 0 && m_seenVoteIds.isEmpty();
+    if (m_skipInitialBlockchainBackfill) {
+        qInfo() << "PollingCorePlugin: legacy vote state has counts but no seen vote ids; initial blockchain backfill will start at tip";
     }
 
     qDebug() << "PollingCorePlugin: loaded vote state from storage - seen vote ids" << m_seenVoteIds.size();

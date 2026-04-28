@@ -73,6 +73,7 @@ private:
     QString m_chainStatus = QStringLiteral("Logos blockchain bridge not started");
     bool m_networkReady = false;
     bool m_chainReady = false;
+    bool m_skipInitialBlockchainBackfill = false;
 };
 
 #endif // POLLING_CORE_PLUGIN_H
